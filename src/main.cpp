@@ -166,6 +166,66 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<double>>& vehicles) {
+
+  cout << "\nCHECKING: Attempting change from lane " << current_lane << " to " << target_lane << "\n";
+  if(current_lane == target_lane) {
+    cout << "SAFE: Target lane same as current. No lane change needed\n";
+    return true;
+  }
+  if(abs(current_lane - target_lane) >=2) {
+    cout << "UNSAFE: Target lane more than one lane away. Not safe\n";
+    return false;
+  }
+
+  double v_host = sqrt(vehicles[0][3]*vehicles[0][3] + vehicles[0][4]*vehicles[0][4]);
+  double s_host = vehicles[0][5];
+  bool ahead_of_host, behind_host, side_of_host;
+
+  for(auto i=1; i<vehicles.size(); ++i) {
+    double vx_actor = vehicles[i][3];
+    double vy_actor = vehicles[i][4];
+    double s_actor = vehicles[i][5];
+    double d_actor = vehicles[i][6];
+    //check if actor near target lane
+    if(s_actor - s_host > 3) { 
+      ahead_of_host = true; 
+      behind_host = false; 
+      side_of_host = false;
+    } else if(s_host - s_actor > 3) {
+      ahead_of_host = false;
+      behind_host = true;
+      side_of_host = false;
+    } else {
+      ahead_of_host = false;
+      behind_host = false;
+      side_of_host = true;
+    }
+
+    double clearance = v_actor; // TODO ignore vehicles outside clearance
+    if(target_lane == 1 && d_actor > 4) { continue; }
+    else if(target_lane == 2 && (d_actor < 4 || d_actor < 8)) { continue; }
+    else if(target_lane == 3 && d_actor < 8) { continue; }
+    double v_actor = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
+    if (ahead_of_host && v_host > v_actor && s_host - s_actor < clearance) { //TODO fix
+      cout << "UNSAFE: Actor vehicle ahead in target lane going too slow\n";
+      cout << "\tV_host " << v_host << "\tV_actor " << v_actor << "\tS_host " << s_host << "\tS_actor " << s_actor << "\n";
+      return false; 
+    }
+    if (side_of_host) { 
+      cout << "Actor vehicle to side in target lane\n";
+      return false; 
+    }
+    if (behind_host && s_host - s_actor < clearance && v_actor > v_host) { 
+      cout << "Actor vehicle behind in target lane too close\n";
+      cout << "\tV_host " << v_host << "\tV_actor " << v_actor << "\tS_host " << s_host << "\tS_actor " << s_actor << "\n";
+      return false; }
+  }
+
+  cout << "SAFE\n";
+  return true;
+}
+
 int main() {
   uWS::Hub h;
 
@@ -236,7 +296,29 @@ int main() {
       double end_path_d = j[1]["end_path_d"];
 
       // Sensor Fusion Data, a list of all other cars on the same side of the road.
-      auto sensor_fusion = j[1]["sensor_fusion"];
+      vector<vector<double>> sensor_fusion = j[1]["sensor_fusion"];
+      vector<double> host_vehicle {-1, x_car, y_car, v_car*cos(yaw_car), v_car*sin(yaw_car), s_car, d_car};
+      sensor_fusion.insert(sensor_fusion.begin(), host_vehicle);
+      laneChangeSafe(1,1, sensor_fusion);
+      laneChangeSafe(1,2, sensor_fusion);
+      laneChangeSafe(1,3, sensor_fusion);
+      laneChangeSafe(2,1, sensor_fusion);
+      laneChangeSafe(2,2, sensor_fusion);
+      laneChangeSafe(2,3, sensor_fusion);
+      laneChangeSafe(3,1, sensor_fusion);
+      laneChangeSafe(3,2, sensor_fusion);
+      laneChangeSafe(3,3, sensor_fusion);
+      /*for (auto i=0; i<sensor_fusion.size(); ++i) {
+        cout << "ID\tX\tY\tVx\tVy\tS\tD\n";
+        cout << sensor_fusion[i][0] 
+          << "\t" << sensor_fusion[i][1]
+          << "\t" << sensor_fusion[i][2]
+          << "\t" << sensor_fusion[i][3]
+          << "\t" << sensor_fusion[i][4]
+          << "\t" << sensor_fusion[i][5]
+          << "\t" << sensor_fusion[i][6] << "\n";
+      }*/
+
 
       json msgJson;
 
