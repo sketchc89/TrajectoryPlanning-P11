@@ -203,7 +203,8 @@ int main() {
     map_waypoints_dy.push_back(d_y);
   }
 
-  h.onMessage([&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  double v_set = 0.0;
+  h.onMessage([&v_set, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
         uWS::OpCode opCode) {
       // "42" at the start of the message means there's a websocket message event.
       // The 4 signifies a websocket message
@@ -242,12 +243,21 @@ int main() {
       vector<double> next_x_vals, next_y_vals, x_anchors, y_anchors;
       int lane = 2;
       int max_path_size = 50;
-      double v_ref = mph2Mps(49.9);
+      double v_ref = mph2Mps(49.0);
       double x_ref = x_car;
       double y_ref = y_car;
       double x_prev_ref, y_prev_ref;
       double yaw_ref = deg2rad(yaw_car);
       int prev_size = previous_path_x.size();
+
+      double v_set;
+      double tolerance = 0.4;
+      if(v_set < v_ref - tolerance) { // speed up
+        v_set += 0.4;
+      } else  if(v_set > v_ref + tolerance) {
+        v_set -= 0.4;
+      } // else stay the same
+
       cout << "V_ref: " << v_ref << "\tX_ref: " << x_ref <<  "\tY_ref: " << y_ref <<  "\tYaw_ref: " << yaw_ref << "\tPrev_size: " << prev_size << "\n";
 
       if(prev_size <2) {
@@ -302,7 +312,7 @@ int main() {
       double dist_target = sqrt( x_target*x_target + y_target*y_target);
       double x_addon = 0;
       for(auto i=0; i<max_path_size - prev_size; ++i) {
-        double N = dist_target/(0.02*v_ref);
+        double N = dist_target/(0.02*v_set);
         double x_pt = x_addon + x_target/N;
         double y_pt = s(x_pt);
         x_addon = x_pt;
