@@ -220,15 +220,12 @@ int main() {
       string event = j[0].get<string>();
 
       if (event == "telemetry") {
-      // j[1] is the data JSON object
-
-      // Main car's localization Data
-      double car_x = j[1]["x"];
-      double car_y = j[1]["y"];
-      double car_s = j[1]["s"];
-      double car_d = j[1]["d"];
-      double car_yaw = j[1]["yaw"];
-      double car_speed = j[1]["speed"];
+      double x_car = j[1]["x"];
+      double y_car = j[1]["y"];
+      double s_car = j[1]["s"];
+      double d_car = j[1]["d"];
+      double yaw_car = j[1]["yaw"];
+      double v_car = j[1]["speed"];
 
       // Previous path data given to the Planner
       auto previous_path_x = j[1]["previous_path_x"];
@@ -242,14 +239,14 @@ int main() {
 
       json msgJson;
 
-      vector<double> next_x_vals, next_y_vals, anchor_x, anchor_y;
+      vector<double> next_x_vals, next_y_vals, x_anchors, y_anchors;
       int lane = 2;
       int max_path_size = 50;
       double v_ref = mph2Mps(49.9);
-      double x_ref = car_x;
-      double y_ref = car_y;
+      double x_ref = x_car;
+      double y_ref = y_car;
       double x_prev_ref, y_prev_ref;
-      double yaw_ref = deg2rad(car_yaw);
+      double yaw_ref = deg2rad(yaw_car);
       int prev_size = previous_path_x.size();
       cout << "V_ref: " << v_ref << "\tX_ref: " << x_ref <<  "\tY_ref: " << y_ref <<  "\tYaw_ref: " << yaw_ref << "\tPrev_size: " << prev_size << "\n";
 
@@ -257,10 +254,10 @@ int main() {
         x_prev_ref = x_ref - cos(yaw_ref);
         y_prev_ref = y_ref - sin(yaw_ref);
         cout << "no prev path, adding points x,y " << x_prev_ref << ", " << y_prev_ref << "\t" << x_ref << ", " << y_ref << "\n";
-        anchor_x.push_back(x_prev_ref);
-        anchor_x.push_back(x_ref);
-        anchor_y.push_back(y_prev_ref);
-        anchor_y.push_back(y_ref);
+        x_anchors.push_back(x_prev_ref);
+        x_anchors.push_back(x_ref);
+        y_anchors.push_back(y_prev_ref);
+        y_anchors.push_back(y_ref);
       } else {
         x_ref =      previous_path_x[prev_size-1];
         x_prev_ref = previous_path_x[prev_size-2];
@@ -268,32 +265,32 @@ int main() {
         y_prev_ref = previous_path_y[prev_size-2];
         yaw_ref = atan2(y_ref - y_prev_ref, x_ref - x_prev_ref);
 
-        anchor_x.push_back(x_prev_ref);
-        anchor_x.push_back(x_ref);
-        anchor_y.push_back(y_prev_ref);
-        anchor_y.push_back(y_ref);
+        x_anchors.push_back(x_prev_ref);
+        x_anchors.push_back(x_ref);
+        y_anchors.push_back(y_prev_ref);
+        y_anchors.push_back(y_ref);
       }
       vector<double> next_wp0, next_wp1, next_wp2;
-      next_wp0 = getXY(car_s+30, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp1 = getXY(car_s+60, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp2 = getXY(car_s+90, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp0 = getXY(s_car+30, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp1 = getXY(s_car+60, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp2 = getXY(s_car+90, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
-      anchor_x.push_back(next_wp0[0]);
-      anchor_x.push_back(next_wp1[0]);
-      anchor_x.push_back(next_wp2[0]);
-      anchor_y.push_back(next_wp0[1]);
-      anchor_y.push_back(next_wp1[1]);
-      anchor_y.push_back(next_wp2[1]);
+      x_anchors.push_back(next_wp0[0]);
+      x_anchors.push_back(next_wp1[0]);
+      x_anchors.push_back(next_wp2[0]);
+      y_anchors.push_back(next_wp0[1]);
+      y_anchors.push_back(next_wp1[1]);
+      y_anchors.push_back(next_wp2[1]);
 
-      for(auto i=0; i< anchor_x.size(); ++i) {
-        double x_shift = anchor_x[i] - x_ref;
-        double y_shift = anchor_y[i] - y_ref;
-        anchor_x[i] = x_shift*cos(-yaw_ref) - y_shift*sin(-yaw_ref);
-        anchor_y[i] = x_shift*sin(-yaw_ref) + y_shift*cos(-yaw_ref);
-        cout << "I: " << i << "\tX: " << anchor_x[i] << "\tY: " << anchor_y[i] << "\n";
+      for(auto i=0; i< x_anchors.size(); ++i) {
+        double x_shift = x_anchors[i] - x_ref;
+        double y_shift = y_anchors[i] - y_ref;
+        x_anchors[i] = x_shift*cos(-yaw_ref) - y_shift*sin(-yaw_ref);
+        y_anchors[i] = x_shift*sin(-yaw_ref) + y_shift*cos(-yaw_ref);
+        cout << "I: " << i << "\tX: " << x_anchors[i] << "\tY: " << y_anchors[i] << "\n";
       }
       tk::spline s;
-      s.set_points(anchor_x, anchor_y);
+      s.set_points(x_anchors, y_anchors);
 
       for(auto i=0; i<prev_size; ++i) {
         next_x_vals.push_back(previous_path_x[i]);
