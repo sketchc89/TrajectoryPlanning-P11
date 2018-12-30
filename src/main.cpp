@@ -219,7 +219,7 @@ bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<doubl
       cout << id << ": SAFE: Actor not in target lane\n";
       continue; 
     }
-    else if(target_lane == 2 && (d_actor < 4 || d_actor < 8)) {
+    else if(target_lane == 2 && (d_actor < 4 || d_actor > 8)) {
       cout << id << ": SAFE: Actor not in target lane\n";
       continue; 
     }
@@ -227,10 +227,10 @@ bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<doubl
       cout << id << ": SAFE: Actor not in target lane\n";
       continue; 
     }
-    double clearance_target = v_host; // TODO ignore vehicles outside clearance
-    double dt = 1.0;
+    double clearance_target = v_host/2 + 5; // need half second clearance
+    double dt = 0.5;
     double v_actor = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
-    double clearance_calc = s_actor + v_actor*dt - s_host - v_actor*dt;
+    double clearance_calc = s_actor + v_actor*dt - s_host - v_host*dt;
     if(abs(clearance_calc) > clearance_target) { 
       cout << id << ": SAFE: Actor far enough away" << clearance_calc << " m away\n";
       continue; 
@@ -258,6 +258,33 @@ bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<doubl
 
   cout << "*ALL SAFE*\n";
   return true;
+}
+
+int encroachingVehicle(const vector<vector<double>>& vehicles) {
+  double v_host = sqrt(vehicles[0][3]*vehicles[0][3] + vehicles[0][4]*vehicles[0][4]);
+  double x_host = vehicles[0][1];
+  double y_host = vehicles[0][2];
+  double s_host = vehicles[0][5];
+  double d_host = vehicles[0][6];
+  for (auto i=1; i<vehicles.size(); ++i) {
+    double id = vehicles[i][0];
+    double x_actor = vehicles[i][1];
+    double y_actor = vehicles[i][2];
+    double vx_actor = vehicles[i][3];
+    double vy_actor = vehicles[i][4];
+    double v_actor = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
+    double s_actor = vehicles[i][5];
+    double d_actor = vehicles[i][6];
+    double x_dist = x_host - x_actor;
+    double y_dist = y_host - y_actor;
+    double dist_actor_host = sqrt(y_dist*y_dist + x_dist*x_dist);
+    if(dist_actor_host > 10 || abs(d_host - d_actor) > 3) { continue; }
+    if(d_actor > d_host && d_actor - d_host < 2.0) { return id;}
+    if(d_host > d_actor && d_host - d_actor < 2.0) { return id;}
+    if(s_actor > s_host && s_actor - s_host < 3 - 0.1*(v_host - v_actor)) { return id; }
+    if(s_host > s_actor && s_host - s_actor < 3 - 0.1*(v_actor - v_host)) { return id; }
+  }
+  return 0;
 }
 
 int main() {
@@ -331,6 +358,7 @@ int main() {
       double end_path_d = j[1]["end_path_d"];
       double v_ref = mph2Mps(49.0);
       bool lane_change_needed = false;
+      double shift = 0.0; // m shift left or right
 
       // Sensor Fusion Data, a list of all other cars on the same side of the road.
       vector<vector<double>> sensor_fusion = j[1]["sensor_fusion"];
@@ -347,15 +375,39 @@ int main() {
           v_ref = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
           lane_change_needed = true;
         }
+        if(lane_actor > lane && d_actor - d_car < 2.5 && abs(s_actor - s_car) < 5) {
+          cout << "WARNING: Vehicle " << id << " approaching on right. Shifting left\n";
+          shift -= 0.5;
+        } else if (lane_actor < lane && d_car - d_actor < 2.5 && abs(s_actor - s_car) < 5) {
+          cout << "WARNING: Vehicle " << id << " approaching on left. Shifting right\n";
+          shift += 0.5;
+        }
       }
-      if(lane_change_needed) {
+      int id_encroaching_vehicle = encroachingVehicle(sensor_fusion);
+
+      if (id_encroaching_vehicle) {
+        double d_encroaching_vehicle = sensor_fusion[id_encroaching_vehicle][6];
+        double s_encroaching_vehicle = sensor_fusion[id_encroaching_vehicle][5];
+        if (d_encroaching_vehicle > d_car && laneChangeSafe(lane,lane-1, sensor_fusion)) {
+          cout << "WARNING: " << id_encroaching_vehicle << " encroaching from right, changing lanes to left\n";
+          lane = lane - 1;
+        } else if (d_car > d_encroaching_vehicle && laneChangeSafe(lane, lane+1, sensor_fusion)) {
+          cout << "WARNING: " << id_encroaching_vehicle << " encroaching from left, changing lanes to right\n";
+          lane = lane + 1;
+        } else if (s_encroaching_vehicle > s_car) {
+          cout << "WARNING: " << id_encroaching_vehicle << " encroaching and lane change not safe. Hard brake\n";
+          v_ref = 0.0;
+        } else {
+          cout << "WARNING: " << id_encroaching_vehicle << " encroaching and lane change not safe.\n";
+        }
+      }
+      else if(lane_change_needed) {
         if(laneChangeSafe(lane,lane-1, sensor_fusion)) {
           lane = lane-1;
         } else if(laneChangeSafe(lane,lane+1, sensor_fusion)) {
           lane = lane+1;
         }
       }
-
 
       vector<double> next_x_vals, next_y_vals, x_anchors, y_anchors;
       int max_path_size = 50;
@@ -366,11 +418,11 @@ int main() {
       int prev_size = previous_path_x.size();
 
       double v_set;
-      double tolerance = 0.2;
+      double tolerance = 0.3;
       if(v_set < v_ref - tolerance) { // speed up
-        v_set += 0.2;
+        v_set += 0.3;
       } else  if(v_set > v_ref + tolerance) {
-        v_set -= 0.2;
+        v_set -= 0.5;
       } // else stay the same
 
       //cout << "V_ref: " << v_ref << "\tX_ref: " << x_ref <<  "\tY_ref: " << y_ref <<  "\tYaw_ref: " << yaw_ref << "\tPrev_size: " << prev_size << "\n";
@@ -396,9 +448,9 @@ int main() {
         y_anchors.push_back(y_ref);
       }
       vector<double> next_wp0, next_wp1, next_wp2;
-      next_wp0 = getXY(s_car+60, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp1 = getXY(s_car+90, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp2 = getXY(s_car+120, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp0 = getXY(s_car+45, 4*(lane-0.5) + shift, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp1 = getXY(s_car+90, 4*(lane-0.5) + shift, map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp2 = getXY(s_car+135, 4*(lane-0.5) + shift, map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
       x_anchors.push_back(next_wp0[0]);
       x_anchors.push_back(next_wp1[0]);
@@ -412,7 +464,7 @@ int main() {
         double y_shift = y_anchors[i] - y_ref;
         x_anchors[i] = x_shift*cos(-yaw_ref) - y_shift*sin(-yaw_ref);
         y_anchors[i] = x_shift*sin(-yaw_ref) + y_shift*cos(-yaw_ref);
-        cout << "I: " << i << "\tX: " << x_anchors[i] << "\tY: " << y_anchors[i] << "\n";
+        //cout << "I: " << i << "\tX: " << x_anchors[i] << "\tY: " << y_anchors[i] << "\n";
       }
       tk::spline s;
       s.set_points(x_anchors, y_anchors);
