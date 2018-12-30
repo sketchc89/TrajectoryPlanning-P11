@@ -166,6 +166,14 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+void printActor(vector<double> actor) {
+  cout << "\tID\tX\tY\tVx\tVy\tS\tD\n";
+  for (auto i=0; i<actor.size(); ++i) {
+    cout << "\t" << actor[i];
+  }
+  cout << "\n";
+}
+
 bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<double>>& vehicles) {
 
   cout << "\nCHECKING: Attempting change from lane " << current_lane << " to " << target_lane << "\n";
@@ -177,22 +185,27 @@ bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<doubl
     cout << "UNSAFE: Target lane more than one lane away. Not safe\n";
     return false;
   }
+  if(target_lane < 1 || target_lane > 3) {
+    cout << "UNSAFE: Target lane " << target_lane << " is not a valid lane\n";
+    return false;
+  }
 
   double v_host = sqrt(vehicles[0][3]*vehicles[0][3] + vehicles[0][4]*vehicles[0][4]);
   double s_host = vehicles[0][5];
   bool ahead_of_host, behind_host, side_of_host;
 
   for(auto i=1; i<vehicles.size(); ++i) {
+    double id = vehicles[i][0];
     double vx_actor = vehicles[i][3];
     double vy_actor = vehicles[i][4];
     double s_actor = vehicles[i][5];
     double d_actor = vehicles[i][6];
     //check if actor near target lane
-    if(s_actor - s_host > 3) { 
+    if(s_actor - s_host > 5) { 
       ahead_of_host = true; 
       behind_host = false; 
       side_of_host = false;
-    } else if(s_host - s_actor > 3) {
+    } else if(s_host - s_actor > 5) {
       ahead_of_host = false;
       behind_host = true;
       side_of_host = false;
@@ -202,27 +215,48 @@ bool laneChangeSafe(int current_lane, int target_lane, const vector<vector<doubl
       side_of_host = true;
     }
 
-    double clearance = v_actor; // TODO ignore vehicles outside clearance
-    if(target_lane == 1 && d_actor > 4) { continue; }
-    else if(target_lane == 2 && (d_actor < 4 || d_actor < 8)) { continue; }
-    else if(target_lane == 3 && d_actor < 8) { continue; }
+    if(target_lane == 1 && d_actor > 4) { 
+      cout << id << ": SAFE: Actor not in target lane\n";
+      continue; 
+    }
+    else if(target_lane == 2 && (d_actor < 4 || d_actor < 8)) {
+      cout << id << ": SAFE: Actor not in target lane\n";
+      continue; 
+    }
+    else if(target_lane == 3 && d_actor < 8) {
+      cout << id << ": SAFE: Actor not in target lane\n";
+      continue; 
+    }
+    double clearance_target = v_host; // TODO ignore vehicles outside clearance
+    double dt = 1.0;
     double v_actor = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
-    if (ahead_of_host && v_host > v_actor && s_host - s_actor < clearance) { //TODO fix
-      cout << "UNSAFE: Actor vehicle ahead in target lane going too slow\n";
-      cout << "\tV_host " << v_host << "\tV_actor " << v_actor << "\tS_host " << s_host << "\tS_actor " << s_actor << "\n";
+    double clearance_calc = s_actor + v_actor*dt - s_host - v_actor*dt;
+    if(abs(clearance_calc) > clearance_target) { 
+      cout << id << ": SAFE: Actor far enough away" << clearance_calc << " m away\n";
+      continue; 
+    }
+
+    if (ahead_of_host && v_host > v_actor) { //TODO fix
+      cout << id << ": UNSAFE: Actor vehicle ahead in target lane going too slow\n";
+      printActor(vehicles[0]);
+      printActor(vehicles[i]);
       return false; 
     }
     if (side_of_host) { 
-      cout << "Actor vehicle to side in target lane\n";
+      cout << id << ": UNSAFE: Actor vehicle to side in target lane\n";
+      printActor(vehicles[0]);
+      printActor(vehicles[i]);
       return false; 
     }
-    if (behind_host && s_host - s_actor < clearance && v_actor > v_host) { 
-      cout << "Actor vehicle behind in target lane too close\n";
-      cout << "\tV_host " << v_host << "\tV_actor " << v_actor << "\tS_host " << s_host << "\tS_actor " << s_actor << "\n";
-      return false; }
+    if (behind_host && v_actor > v_host) { 
+      cout << id << ": UNSAFE: Actor vehicle behind in target lane going too fast\n";
+      printActor(vehicles[0]);
+      printActor(vehicles[i]);
+      return false; 
+    }
   }
 
-  cout << "SAFE\n";
+  cout << "*ALL SAFE*\n";
   return true;
 }
 
@@ -264,7 +298,8 @@ int main() {
   }
 
   double v_set = 0.0;
-  h.onMessage([&v_set, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  int lane = 2;
+  h.onMessage([&lane, &v_set, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
         uWS::OpCode opCode) {
       // "42" at the start of the message means there's a websocket message event.
       // The 4 signifies a websocket message
@@ -294,38 +329,36 @@ int main() {
       // Previous path's end s and d values 
       double end_path_s = j[1]["end_path_s"];
       double end_path_d = j[1]["end_path_d"];
+      double v_ref = mph2Mps(49.0);
+      bool lane_change_needed = false;
 
       // Sensor Fusion Data, a list of all other cars on the same side of the road.
       vector<vector<double>> sensor_fusion = j[1]["sensor_fusion"];
       vector<double> host_vehicle {-1, x_car, y_car, v_car*cos(yaw_car), v_car*sin(yaw_car), s_car, d_car};
       sensor_fusion.insert(sensor_fusion.begin(), host_vehicle);
-      laneChangeSafe(1,1, sensor_fusion);
-      laneChangeSafe(1,2, sensor_fusion);
-      laneChangeSafe(1,3, sensor_fusion);
-      laneChangeSafe(2,1, sensor_fusion);
-      laneChangeSafe(2,2, sensor_fusion);
-      laneChangeSafe(2,3, sensor_fusion);
-      laneChangeSafe(3,1, sensor_fusion);
-      laneChangeSafe(3,2, sensor_fusion);
-      laneChangeSafe(3,3, sensor_fusion);
-      /*for (auto i=0; i<sensor_fusion.size(); ++i) {
-        cout << "ID\tX\tY\tVx\tVy\tS\tD\n";
-        cout << sensor_fusion[i][0] 
-          << "\t" << sensor_fusion[i][1]
-          << "\t" << sensor_fusion[i][2]
-          << "\t" << sensor_fusion[i][3]
-          << "\t" << sensor_fusion[i][4]
-          << "\t" << sensor_fusion[i][5]
-          << "\t" << sensor_fusion[i][6] << "\n";
-      }*/
+      for(auto i=1; i< sensor_fusion.size(); ++i) {
+        double id = sensor_fusion[i][0];
+        double vx_actor = sensor_fusion[i][3];
+        double vy_actor = sensor_fusion[i][4];
+        double s_actor = sensor_fusion[i][5];
+        double d_actor = sensor_fusion[i][6];
+        int lane_actor = static_cast<int> (1 + d_actor/4);
+        if(lane_actor == lane && s_actor > s_car && s_actor - s_car < 30) {
+          v_ref = sqrt(vx_actor*vx_actor + vy_actor*vy_actor);
+          lane_change_needed = true;
+        }
+      }
+      if(lane_change_needed) {
+        if(laneChangeSafe(lane,lane-1, sensor_fusion)) {
+          lane = lane-1;
+        } else if(laneChangeSafe(lane,lane+1, sensor_fusion)) {
+          lane = lane+1;
+        }
+      }
 
-
-      json msgJson;
 
       vector<double> next_x_vals, next_y_vals, x_anchors, y_anchors;
-      int lane = 2;
       int max_path_size = 50;
-      double v_ref = mph2Mps(49.0);
       double x_ref = x_car;
       double y_ref = y_car;
       double x_prev_ref, y_prev_ref;
@@ -333,14 +366,14 @@ int main() {
       int prev_size = previous_path_x.size();
 
       double v_set;
-      double tolerance = 0.4;
+      double tolerance = 0.2;
       if(v_set < v_ref - tolerance) { // speed up
-        v_set += 0.4;
+        v_set += 0.2;
       } else  if(v_set > v_ref + tolerance) {
-        v_set -= 0.4;
+        v_set -= 0.2;
       } // else stay the same
 
-      cout << "V_ref: " << v_ref << "\tX_ref: " << x_ref <<  "\tY_ref: " << y_ref <<  "\tYaw_ref: " << yaw_ref << "\tPrev_size: " << prev_size << "\n";
+      //cout << "V_ref: " << v_ref << "\tX_ref: " << x_ref <<  "\tY_ref: " << y_ref <<  "\tYaw_ref: " << yaw_ref << "\tPrev_size: " << prev_size << "\n";
 
       if(prev_size <2) {
         x_prev_ref = x_ref - cos(yaw_ref);
@@ -363,9 +396,9 @@ int main() {
         y_anchors.push_back(y_ref);
       }
       vector<double> next_wp0, next_wp1, next_wp2;
-      next_wp0 = getXY(s_car+30, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp1 = getXY(s_car+60, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-      next_wp2 = getXY(s_car+90, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp0 = getXY(s_car+60, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp1 = getXY(s_car+90, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+      next_wp2 = getXY(s_car+120, 4*(lane-0.5), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
       x_anchors.push_back(next_wp0[0]);
       x_anchors.push_back(next_wp1[0]);
@@ -409,6 +442,7 @@ int main() {
         next_y_vals.push_back(y_pt);
       }
 
+      json msgJson;
       msgJson["next_x"] = next_x_vals;
       msgJson["next_y"] = next_y_vals;
 
